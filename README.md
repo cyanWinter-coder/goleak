@@ -61,6 +61,50 @@ func TestA(t *testing.T) {
 ```
 For such cases you should also defer to using `goleak.VerifyTestMain` as shown above.
 
+### Named scopes for parallel tests
+
+`VerifyNone` cannot tell a goroutine leaked by one test apart from the
+goroutines of another test running at the same time. For that, use a named
+**scope**. A scope records a baseline of live goroutines when it opens and, on
+exit, checks only goroutines that were created during its lifetime and are
+still alive — attributing each one to the innermost scope that owns it:
+
+```go
+func TestParallelWorkers(t *testing.T) {
+	t.Parallel()
+
+	s := goleak.StartScope(t.Name())
+	defer s.End(t)
+
+	// goroutines started here are attributed to this scope
+}
+```
+
+Scopes may be nested. A goroutine created inside an inner scope is reported by
+that inner scope only, never again by an ancestor. Scopes opened from different
+goroutines (such as parallel subtests) are independent: each reports only its
+own goroutines.
+
+For the common open/run/check pattern, `VerifyScope` wraps the whole thing and
+guarantees deterministic cleanup even if the function panics:
+
+```go
+goleak.VerifyScope(t, "worker-pool", func() {
+	// code under test
+})
+```
+
+A scope that is opened but should not be checked can be discarded with
+`(*Scope).Close()`. Both `End` and `Close` are idempotent. The grace period and
+retry behavior can be tuned with the same options as `Find` (except `Cleanup`
+and `RunOnFailure`, which remain exclusive to `VerifyNone`/`VerifyTestMain`).
+
+On Go 1.21 and newer, attribution follows the runtime's `created by ... in
+goroutine N` information, so goroutines spawned indirectly through helper
+goroutines are still assigned to the correct scope. Error reports include a
+stable stack summary, the creation site and the owning scope, but never test
+argument values (stack traces contain function and file names only).
+
 ## Determine Source of Package Leaks
 
 When verifying leaks using `TestMain`, the leak test is only run once after all tests

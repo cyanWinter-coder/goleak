@@ -220,6 +220,68 @@ func TestParseStacksPanicsOnMalformedTrace(t *testing.T) {
 	assert.Contains(t, msg, string(malformed))
 }
 
+func TestParseCreatedByID(t *testing.T) {
+	tests := []struct {
+		name string
+		give string
+		want int
+	}{
+		{
+			name: "with creator goroutine",
+			give: "created by example.com/foo/bar.baz in goroutine 123",
+			want: 123,
+		},
+		{
+			name: "no creator goroutine suffix",
+			give: "created by example.com/foo/bar.baz",
+			want: 0,
+		},
+		{
+			name: "not a created by line",
+			give: "example.com/foo/bar.baz()",
+			want: 0,
+		},
+		{
+			name: "malformed goroutine id",
+			give: "created by example.com/foo/bar.baz in goroutine nope",
+			want: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, parseCreatedByID(tt.give))
+		})
+	}
+}
+
+func TestParseStackCreatedByID(t *testing.T) {
+	withCreator := joinLines(
+		"goroutine 7 [chan receive]:",
+		"example.com/foo/bar.baz()",
+		"	example.com/foo/bar.go:123",
+		"created by example.com/foo/bar.qux in goroutine 9",
+		"	example.com/foo/bar.go:456",
+	)
+	stacks, err := newStackParser(strings.NewReader(withCreator)).Parse()
+	require.NoError(t, err)
+	require.Len(t, stacks, 1)
+	assert.Equal(t, 9, stacks[0].CreatedByID())
+	assert.Equal(t, "example.com/foo/bar.qux", stacks[0].CreatedBy())
+
+	withoutCreator := joinLines(
+		"goroutine 7 [chan receive]:",
+		"example.com/foo/bar.baz()",
+		"	example.com/foo/bar.go:123",
+		"created by example.com/foo/bar.qux",
+		"	example.com/foo/bar.go:456",
+	)
+	stacks, err = newStackParser(strings.NewReader(withoutCreator)).Parse()
+	require.NoError(t, err)
+	require.Len(t, stacks, 1)
+	assert.Zero(t, stacks[0].CreatedByID())
+}
+
 func TestParseFuncName(t *testing.T) {
 	tests := []struct {
 		name    string

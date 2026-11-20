@@ -40,6 +40,11 @@ type Stack struct {
 	// The function that spawned the goroutine.
 	createdBy string
 
+	// The goroutine that spawned this one, if the runtime reported one
+	// (Go 1.21+ includes "in goroutine N" in the "created by" line).
+	// Zero when the creator goroutine is unknown.
+	createdByID int
+
 	// The first function on the stack.
 	firstFunction string
 
@@ -68,6 +73,14 @@ func (s Stack) Full() string {
 // CreatedBy returns the name of the function that spawned the goroutine.
 func (s Stack) CreatedBy() string {
 	return s.createdBy
+}
+
+// CreatedByID returns the ID of the goroutine that spawned this one.
+// It returns zero when the runtime did not report a creator
+// (the "in goroutine N" suffix is only present in Go 1.21+),
+// or when the stack has no "created by" entry.
+func (s Stack) CreatedByID() int {
+	return s.createdByID
 }
 
 // FirstFunction returns the name of the first function on the stack.
@@ -149,6 +162,7 @@ func (p *stackParser) parseStack(line string) (Stack, error) {
 	// Read the rest of the stack trace.
 	var (
 		createdBy     string
+		createdByID   int
 		firstFunction string
 		fullStack     bytes.Buffer
 	)
@@ -234,6 +248,7 @@ func (p *stackParser) parseStack(line string) (Stack, error) {
 			//         /usr/lib/go/src/testing/testing.go:1649 +0x3ad
 			//
 			createdBy = funcName
+			createdByID = parseCreatedByID(line)
 			break
 		}
 	}
@@ -242,6 +257,7 @@ func (p *stackParser) parseStack(line string) (Stack, error) {
 		id:            id,
 		state:         state,
 		createdBy:     createdBy,
+		createdByID:   createdByID,
 		firstFunction: firstFunction,
 		allFunctions:  funcs,
 		fullStack:     fullStack.String(),
@@ -296,6 +312,30 @@ func parseFuncName(line string) (name string, creator bool, err error) {
 	}
 
 	return name, creator, nil
+}
+
+// parseCreatedByID extracts the creator goroutine ID from a "created by"
+// line that looks like:
+//
+//	created by example.com/foo/bar.baz in goroutine 123
+//
+// It returns zero if the line carries no "in goroutine N" suffix
+// (Go 1.20 and earlier never include it), or if the ID is malformed.
+func parseCreatedByID(line string) int {
+	after, ok := strings.CutPrefix(line, "created by ")
+	if !ok {
+		return 0
+	}
+	idx := strings.Index(after, " in goroutine ")
+	if idx < 0 {
+		return 0
+	}
+	idStr := after[idx+len(" in goroutine "):]
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		return 0
+	}
+	return id
 }
 
 // parseGoStackHeader parses a stack header that looks like:
